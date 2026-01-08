@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="api-base" content="" />
+  <title>DocuMind AI</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-inner">
+        <div class="sidebar-header">
+          <div class="sidebar-title">📄 Document Upload</div>
+        </div>
+
+        <label class="field-label" for="pdfInput">Upload PDF Document</label>
+        <input class="file-input" id="pdfInput" type="file" accept="application/pdf" />
+        <button class="btn" id="uploadBtn">Upload</button>
+        <div class="status" id="uploadStatus"></div>
+
+        <div class="divider"></div>
+
+        <div class="sidebar-header">
+          <div class="sidebar-title">⚙️ Knowledge Base</div>
+        </div>
+        <button class="btn" id="rebuildBtn">🔄 Rebuild Knowledge Base</button>
+        <div class="status" id="rebuildStatus"></div>
+
+        <div class="divider"></div>
+
+        <div class="sidebar-header">
+          <div class="sidebar-title">🗑️ Clear Data</div>
+        </div>
+        <button class="btn" id="clearHistoryBtn">Clear Chat History</button>
+        <div class="status" id="clearStatus"></div>
+      </div>
+    </aside>
+
+    <div class="overlay" id="overlay"></div>
+
+    <main class="main">
+      <header class="app-header">
+        <div class="app-logo">
+          <div class="app-icon">🤖</div>
+          <span class="app-name">DocuMind AI</span>
+        </div>
+        <button class="menu-btn" id="menuBtn" aria-label="Menu">M</button>
+      </header>
+
+      <section class="greeting" id="greeting">
+        <div class="ai-avatar"></div>
+        <div class="greeting-text">Good evening!<br />How can I help you today?</div>
+        <div class="greeting-subtext">Upload a document and ask questions about it</div>
+        <div class="prompt-buttons">
+          <button class="prompt-btn" id="promptUpload">📄 Upload Document</button>
+          <button class="prompt-btn" id="promptExample">💡 Example Questions</button>
+        </div>
+      </section>
+
+      <section class="chat-area" id="chatArea"></section>
+
+      <footer class="input-area">
+        <div class="input-container">
+          <input class="input-field" id="questionInput" type="text" placeholder="Ask about your documents..." />
+          <div class="input-icons">
+            <button class="icon-btn send" id="sendBtn" aria-label="Send">🚀</button>
+          </div>
+        </div>
+        <div class="disclaimer">Please verify important information</div>
+      </footer>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

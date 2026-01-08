@@ -1,0 +1,29 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.pkl
+.venv/
+venv/
+ENV/
+.env.*
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+
+# App runtime outputs
+chat_history.json
+
+# Vector DB / processed artifacts (can be regenerated)
+data/raw_data/
+data/processed_data/
+data/faiss_index/
+
+# Logs
+*.log

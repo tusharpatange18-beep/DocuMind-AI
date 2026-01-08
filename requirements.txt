@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+python-multipart
+pypdf
+sentence-transformers
+faiss-cpu
+numpy
+google-generativeai
+python-dotenv
+
+# Better PDF text extraction / rendering (helps scanned PDFs)
+pymupdf
+
+# OCR support for scanned PDFs (optional but recommended)
+pytesseract
+pdf2image
+pillow
