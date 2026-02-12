@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: documind-ai-backend
+    env: python
+    plan: free
+    rootDir: rag-chatbot
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"
+    autoDeploy: true
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: rag-chatbot
+      - key: CORS_ALLOW_ORIGINS
+        sync: false
+      - key: ASK_TIMEOUT_SECONDS
+        value: "120"
+      - key: EMBED_MODEL_NAME
+        value: all-MiniLM-L6-v2

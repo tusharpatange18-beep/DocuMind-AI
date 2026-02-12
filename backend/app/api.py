@@ -1,21 +1,27 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
+from backend.app.persistence import load_history as _load_history
+from backend.app.persistence import save_history as _save_history
+from backend.app.persistence import sync_remote_pdfs_to_local
+from backend.app.persistence import upload_kb_artifacts
 from backend.app.pdf_ingestion import save_uploaded_pdf
 from backend.app.rag_pipeline import run_rag
 from backend.app.rebuild_pipeline import rebuild_knowledge_base
+from backend.app.retriever import clear_retriever_caches
 
 router = APIRouter()
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-HISTORY_FILE = PROJECT_ROOT / "chat_history.json"
+ASK_TIMEOUT_SECONDS = float(os.getenv("ASK_TIMEOUT_SECONDS", "120"))
 
 
 class AskRequest(BaseModel):
@@ -30,19 +36,6 @@ class SourceItem(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     sources: list[dict[str, Any]]
-
-
-def _load_history() -> list[dict[str, Any]]:
-    if not HISTORY_FILE.exists():
-        return []
-    try:
-        return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-
-
-def _save_history(items: list[dict[str, Any]]) -> None:
-    HISTORY_FILE.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 @router.get("/")
@@ -65,7 +58,13 @@ async def upload_pdf(file: UploadFile = File(...)):
 @router.post("/rebuild-knowledge-base")
 async def rebuild_kb():
     try:
+        # In hosted mode with remote storage, make sure all uploaded PDFs are present locally.
+        await run_in_threadpool(sync_remote_pdfs_to_local)
         await run_in_threadpool(rebuild_knowledge_base)
+        # Ensure the next /ask sees the updated index + metadata.
+        clear_retriever_caches()
+        # Persist rebuilt artifacts so /ask works after restarts.
+        await run_in_threadpool(upload_kb_artifacts)
         return {"success": True, "status": "Knowledge base rebuilt"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -80,7 +79,14 @@ async def ask(req: AskRequest):
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
     try:
-        answer, sources = await run_in_threadpool(run_rag, question)
+        try:
+            with anyio.fail_after(ASK_TIMEOUT_SECONDS):
+                answer, sources = await run_in_threadpool(run_rag, question)
+        except TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Timed out after {int(ASK_TIMEOUT_SECONDS)}s while generating an answer.",
+            )
 
         history = _load_history()
         history.append({"question": question, "answer": answer, "sources": sources})

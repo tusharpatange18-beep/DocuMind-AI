@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,10 +9,19 @@ from backend.app.api import router as api_router
 
 app = FastAPI(title="DocuMind AI", version="1.0.0")
 
-# CORS: frontend is a separate static site; keep permissive by default.
+def _cors_origins_from_env() -> list[str]:
+    raw = (os.getenv("CORS_ALLOW_ORIGINS") or "").strip()
+    if not raw:
+        return ["*"]
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    return origins or ["*"]
+
+
+# CORS: frontend is usually a separate static site.
+# For production, set CORS_ALLOW_ORIGINS to a comma-separated list of allowed origins.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins_from_env(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"]

@@ -4,7 +4,11 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from functools import lru_cache
+import hashlib
 from pathlib import Path
+from typing import Any
 
 import faiss
 import numpy as np
@@ -22,23 +26,95 @@ METADATA_PATH = PROCESSED_DIR / "metadata.json"
 FAISS_INDEX_PATH = FAISS_DIR / "index.faiss"
 MANIFEST_PATH = PROCESSED_DIR / "manifest.json"
 
+CACHE_DIR = PROCESSED_DIR / "cache"
+CACHE_INDEX_PATH = CACHE_DIR / "index.json"
+CACHE_VERSION = 1
+
+EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
+
 _EMBEDDER: SentenceTransformer | None = None
 
 
 def _get_embedder() -> SentenceTransformer:
     global _EMBEDDER
     if _EMBEDDER is None:
-        _EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+        _EMBEDDER = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")
     return _EMBEDDER
+
+
+def _stable_id_for_pdf_name(pdf_name: str) -> str:
+    # Stable per filename; avoids issues with spaces/unicode on Windows.
+    h = hashlib.sha1(pdf_name.encode("utf-8"), usedforsecurity=False).hexdigest()  # noqa: S324
+    return h[:16]
+
+
+def _rebuild_config_signature(
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+    embed_batch_size: int,
+    ocr_workers: int,
+    ocr_mode: str,
+) -> dict[str, Any]:
+    return {
+        "cache_version": CACHE_VERSION,
+        "chunk_size": int(chunk_size),
+        "chunk_overlap": int(chunk_overlap),
+        "embed_batch_size": int(embed_batch_size),
+        "embed_model": EMBED_MODEL_NAME,
+        "ocr_workers": int(ocr_workers),
+        "ocr_mode": (ocr_mode or "auto"),
+    }
+
+
+def _load_cache_index() -> dict[str, Any]:
+    if not CACHE_INDEX_PATH.exists():
+        return {"version": CACHE_VERSION, "config": {}, "items": {}}
+    try:
+        parsed = json.loads(CACHE_INDEX_PATH.read_text(encoding="utf-8"))
+        if not isinstance(parsed, dict):
+            return {"version": CACHE_VERSION, "config": {}, "items": {}}
+        if parsed.get("version") != CACHE_VERSION:
+            return {"version": CACHE_VERSION, "config": {}, "items": {}}
+        if not isinstance(parsed.get("items"), dict):
+            parsed["items"] = {}
+        return parsed
+    except Exception:
+        return {"version": CACHE_VERSION, "config": {}, "items": {}}
+
+
+def _save_cache_index(index: dict[str, Any]) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_INDEX_PATH.write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _pdf_signature(pdf_path: Path) -> dict[str, int]:
+    st = pdf_path.stat()
+    return {
+        "size": int(st.st_size),
+        "mtime_ns": int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))),
+    }
+
+
+@dataclass(frozen=True)
+class PdfCachePaths:
+    chunks_json: Path
+    vectors_npy: Path
+
+
+def _cache_paths_for(pdf_name: str) -> PdfCachePaths:
+    cache_id = _stable_id_for_pdf_name(pdf_name)
+    return PdfCachePaths(
+        chunks_json=CACHE_DIR / f"{cache_id}.chunks.json",
+        vectors_npy=CACHE_DIR / f"{cache_id}.vectors.npy",
+    )
 
 
 def _current_manifest() -> dict[str, dict[str, int]]:
     manifest: dict[str, dict[str, int]] = {}
     for pdf_path in sorted(RAW_DATA_DIR.glob("*.pdf")):
-        st = pdf_path.stat()
         manifest[pdf_path.name] = {
-            "size": int(st.st_size),
-            "mtime_ns": int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))),
+            **_pdf_signature(pdf_path),
         }
     return manifest
 
@@ -206,6 +282,7 @@ def rebuild_knowledge_base() -> None:
 
     Speed optimizations:
     - Skips rebuild when PDFs unchanged (manifest)
+    - Incremental rebuild: re-embeds only changed PDFs (per-PDF cache)
     - Uses PyMuPDF for fast extraction when available
     - OCRs only pages that have no extractable text
     - Parallel OCR on rendered images (no repeated PDF opens)
@@ -235,6 +312,12 @@ def rebuild_knowledge_base() -> None:
         ocr_workers = 2
     ocr_workers = max(1, min(8, ocr_workers))
 
+    ocr_mode = (os.getenv("OCR_MODE", "auto") or "auto").strip().lower()
+    # OCR_MODE:
+    # - auto: OCR only when needed and available (default)
+    # - off: never OCR (fastest)
+    # - on: OCR when needed (same as auto but ignores missing tesseract? kept as auto behavior)
+
     try:
         chunk_size = int(os.getenv("CHUNK_SIZE_CHARS", "2000"))
     except Exception:
@@ -244,21 +327,63 @@ def rebuild_knowledge_base() -> None:
     except Exception:
         chunk_overlap = 200
 
-    ocr_is_available = _ocr_available()
+    ocr_is_available = _ocr_available() if ocr_mode != "off" else False
     ocr_missing_hits = 0
     ocr_attempt_hits = 0
 
-    chunks: list[dict] = []
-    metadata: list[dict] = []
+    # Load per-PDF cache index so we can skip reprocessing unchanged PDFs.
+    cache_index = _load_cache_index()
+    config_sig = _rebuild_config_signature(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        embed_batch_size=embed_batch_size,
+        ocr_workers=ocr_workers,
+        ocr_mode=ocr_mode,
+    )
+    if cache_index.get("config") != config_sig:
+        # Config changed: invalidate cache entries (but leave files; they will be overwritten lazily).
+        cache_index = {"version": CACHE_VERSION, "config": config_sig, "items": {}}
+    else:
+        cache_index["config"] = config_sig
+
+    cached_items: dict[str, Any] = cache_index.get("items", {})
+
+    # We build the final artifacts by concatenating all per-PDF cached outputs.
+    all_chunks: list[dict[str, Any]] = []
+    all_vectors: list[np.ndarray] = []
 
     pdfs = sorted(RAW_DATA_DIR.glob("*.pdf"))
     print(f"[rebuild] PDFs found: {len(pdfs)}", flush=True)
 
     for pdf_path in pdfs:
-        print(f"[rebuild] extracting: {pdf_path.name}", flush=True)
+        pdf_name = pdf_path.name
+        sig = _pdf_signature(pdf_path)
+        paths = _cache_paths_for(pdf_name)
+        cached = cached_items.get(pdf_name)
+        cache_hit = (
+            isinstance(cached, dict)
+            and cached.get("sig") == sig
+            and paths.chunks_json.exists()
+            and paths.vectors_npy.exists()
+        )
+
+        if cache_hit:
+            try:
+                cached_chunks = json.loads(paths.chunks_json.read_text(encoding="utf-8"))
+                cached_vectors = np.load(str(paths.vectors_npy))
+                if isinstance(cached_chunks, list) and cached_vectors is not None and len(cached_chunks) == int(cached_vectors.shape[0]):
+                    all_chunks.extend(cached_chunks)
+                    all_vectors.append(cached_vectors)
+                    print(f"[rebuild] cache hit: {pdf_name} (chunks={len(cached_chunks)})", flush=True)
+                    continue
+            except Exception:
+                # Fall through to rebuild this PDF.
+                pass
+
+        print(f"[rebuild] processing: {pdf_name}", flush=True)
         pages = _extract_pdf_pages_fast(pdf_path)
         if not pages:
-            print(f"[rebuild] no pages/text extracted: {pdf_path.name}", flush=True)
+            print(f"[rebuild] no pages/text extracted: {pdf_name}", flush=True)
             continue
 
         print(f"[rebuild] pages: {len(pages)}", flush=True)
@@ -268,7 +393,7 @@ def rebuild_knowledge_base() -> None:
         likely_scanned = all((t or "").strip() == "" for _pn, t in probe)
 
         if likely_scanned:
-            print(f"[rebuild] detected scanned PDF: {pdf_path.name}", flush=True)
+            print(f"[rebuild] detected scanned PDF: {pdf_name}", flush=True)
             if not ocr_is_available:
                 ocr_missing_hits += len(pages)
                 print("[rebuild] OCR unavailable; skipping scanned pages.", flush=True)
@@ -293,13 +418,34 @@ def rebuild_knowledge_base() -> None:
                     except Exception:
                         ocr_text_by_page[pn] = ""
 
+            local_chunks: list[dict[str, Any]] = []
             for page_no, _ in pages:
                 text = (ocr_text_by_page.get(page_no, "") or "").strip()
                 if not text:
                     continue
                 for part in _split_text(text, chunk_size, chunk_overlap):
-                    chunks.append({"chunk_text": part, "source": pdf_path.name, "page": page_no})
-                    metadata.append({"index": len(metadata), "source": pdf_path.name, "page": page_no})
+                    local_chunks.append({"chunk_text": part, "source": pdf_name, "page": page_no})
+
+            if not local_chunks:
+                continue
+
+            texts = [c["chunk_text"] for c in local_chunks]
+            model = _get_embedder()
+            print(f"[rebuild] embedding {pdf_name} (chunks={len(texts)}, batch_size={embed_batch_size})...", flush=True)
+            vectors = model.encode(
+                texts,
+                convert_to_numpy=True,
+                batch_size=embed_batch_size,
+                show_progress_bar=False,
+            )
+
+            paths.chunks_json.parent.mkdir(parents=True, exist_ok=True)
+            paths.chunks_json.write_text(json.dumps(local_chunks, indent=2, ensure_ascii=False), encoding="utf-8")
+            np.save(str(paths.vectors_npy), vectors)
+            cached_items[pdf_name] = {"sig": sig}
+
+            all_chunks.extend(local_chunks)
+            all_vectors.append(vectors)
 
             continue
 
@@ -329,6 +475,7 @@ def rebuild_knowledge_base() -> None:
                 ocr_missing_hits += len(empty_pages)
                 print("[rebuild] OCR unavailable; leaving empty pages blank.", flush=True)
 
+        local_chunks2: list[dict[str, Any]] = []
         for page_no, text in pages:
             text = (text or "").strip()
             if not text:
@@ -336,10 +483,36 @@ def rebuild_knowledge_base() -> None:
             if not text:
                 continue
             for part in _split_text(text, chunk_size, chunk_overlap):
-                chunks.append({"chunk_text": part, "source": pdf_path.name, "page": page_no})
-                metadata.append({"index": len(metadata), "source": pdf_path.name, "page": page_no})
+                local_chunks2.append({"chunk_text": part, "source": pdf_name, "page": page_no})
 
-    if not chunks:
+        if not local_chunks2:
+            continue
+
+        texts2 = [c["chunk_text"] for c in local_chunks2]
+        model2 = _get_embedder()
+        print(f"[rebuild] embedding {pdf_name} (chunks={len(texts2)}, batch_size={embed_batch_size})...", flush=True)
+        vectors2 = model2.encode(
+            texts2,
+            convert_to_numpy=True,
+            batch_size=embed_batch_size,
+            show_progress_bar=False,
+        )
+
+        paths.chunks_json.parent.mkdir(parents=True, exist_ok=True)
+        paths.chunks_json.write_text(json.dumps(local_chunks2, indent=2, ensure_ascii=False), encoding="utf-8")
+        np.save(str(paths.vectors_npy), vectors2)
+        cached_items[pdf_name] = {"sig": sig}
+
+        all_chunks.extend(local_chunks2)
+        all_vectors.append(vectors2)
+
+    # Remove cache entries for PDFs no longer present.
+    present = {p.name for p in pdfs}
+    for name in list(cached_items.keys()):
+        if name not in present:
+            cached_items.pop(name, None)
+
+    if not all_chunks:
         if ocr_missing_hits > 0 and not ocr_is_available:
             raise ValueError(
                 "No extractable text found. This often happens with scanned PDFs. "
@@ -352,31 +525,18 @@ def rebuild_knowledge_base() -> None:
             )
         raise ValueError("No valid text found in uploaded PDFs.")
 
-    CHUNKS_PATH.write_text(json.dumps(chunks, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Build final combined artifacts (compatible with existing retriever/RAG code).
+    # Re-number indices to match the flattened chunks list.
+    metadata: list[dict[str, Any]] = []
+    for i, c in enumerate(all_chunks):
+        metadata.append({"index": i, "source": c.get("source", ""), "page": c.get("page", "")})
+
+    CHUNKS_PATH.write_text(json.dumps(all_chunks, indent=2, ensure_ascii=False), encoding="utf-8")
     METADATA_PATH.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    print(f"[rebuild] chunks: {len(chunks)}", flush=True)
+    print(f"[rebuild] total chunks: {len(all_chunks)}", flush=True)
 
-    texts = [c["chunk_text"] for c in chunks]
-    model = _get_embedder()
-
-    print(f"[rebuild] embedding (batch_size={embed_batch_size})...", flush=True)
-    emb_batches: list[np.ndarray] = []
-    total = len(texts)
-    for start in range(0, total, embed_batch_size):
-        batch = texts[start : start + embed_batch_size]
-        emb = model.encode(
-            batch,
-            convert_to_numpy=True,
-            batch_size=embed_batch_size,
-            show_progress_bar=False,
-        )
-        emb_batches.append(emb)
-        done = min(start + len(batch), total)
-        print(f"[rebuild] embedded {done}/{total}", flush=True)
-
-    embeddings = np.vstack(emb_batches)
-
+    embeddings = np.vstack(all_vectors) if len(all_vectors) > 1 else all_vectors[0]
     np.save(str(VECTORS_PATH), embeddings)
 
     dim = embeddings.shape[1]
@@ -385,6 +545,18 @@ def rebuild_knowledge_base() -> None:
     faiss.write_index(index, str(FAISS_INDEX_PATH))
 
     MANIFEST_PATH.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    cache_index["items"] = cached_items
+    _save_cache_index(cache_index)
+
+    # Invalidate retriever caches so subsequent /ask uses the new index immediately.
+    try:
+        from backend.app import retriever as _retriever  # local import to avoid cycles
+
+        if hasattr(_retriever, "clear_retriever_caches"):
+            _retriever.clear_retriever_caches()
+    except Exception:
+        pass
 
     elapsed = time.time() - started
     print(f"[rebuild] done in {elapsed:.1f}s", flush=True)

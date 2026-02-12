@@ -184,13 +184,18 @@ function scrollToBottom() {
 }
 
 async function apiJson(path, options = {}) {
+  const timeoutMs = (path === "/ask") ? 125000 : 30000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
+    signal: controller.signal,
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {}),
     },
-  });
+  }).finally(() => clearTimeout(timer));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = data.detail || `Request failed: ${res.status}`;

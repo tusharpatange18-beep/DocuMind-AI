@@ -7,6 +7,7 @@ faiss-cpu
 numpy
 google-generativeai
 python-dotenv
+supabase
 
 # Better PDF text extraction / rendering (helps scanned PDFs)
 pymupdf

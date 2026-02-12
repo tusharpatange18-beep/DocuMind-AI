@@ -6,12 +6,14 @@ from pathlib import Path
 from backend.app.llm import generate_answer
 from backend.app.prompt import build_prompt
 from backend.app.retriever import retrieve_relevant_chunks
+from backend.app.persistence import ensure_kb_artifacts
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHUNKS_PATH = PROJECT_ROOT / "data" / "processed_data" / "chunks.json"
 
 
 def run_rag(question: str):
+    ensure_kb_artifacts()
     retrieved = retrieve_relevant_chunks(question)
 
     if not CHUNKS_PATH.exists():
