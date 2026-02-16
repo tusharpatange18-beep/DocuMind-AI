@@ -7,8 +7,8 @@ from functools import lru_cache
 
 from sentence_transformers import SentenceTransformer
 
-from backend.app.faiss_store import load_faiss_index
-from backend.app.persistence import ensure_kb_artifacts
+from app.faiss_store import load_faiss_index
+from app.persistence import ensure_kb_artifacts
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 METADATA_PATH = PROJECT_ROOT / "data" / "processed_data" / "metadata.json"

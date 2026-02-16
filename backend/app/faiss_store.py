@@ -5,7 +5,7 @@ from pathlib import Path
 import faiss
 import numpy as np
 
-from backend.app.persistence import ensure_kb_artifacts
+from app.persistence import ensure_kb_artifacts
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 

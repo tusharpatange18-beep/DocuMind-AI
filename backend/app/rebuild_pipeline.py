@@ -551,7 +551,7 @@ def rebuild_knowledge_base() -> None:
 
     # Invalidate retriever caches so subsequent /ask uses the new index immediately.
     try:
-        from backend.app import retriever as _retriever  # local import to avoid cycles
+        from app import retriever as _retriever  # local import to avoid cycles
 
         if hasattr(_retriever, "clear_retriever_caches"):
             _retriever.clear_retriever_caches()

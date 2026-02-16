@@ -10,14 +10,14 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
-from backend.app.persistence import load_history as _load_history
-from backend.app.persistence import save_history as _save_history
-from backend.app.persistence import sync_remote_pdfs_to_local
-from backend.app.persistence import upload_kb_artifacts
-from backend.app.pdf_ingestion import save_uploaded_pdf
-from backend.app.rag_pipeline import run_rag
-from backend.app.rebuild_pipeline import rebuild_knowledge_base
-from backend.app.retriever import clear_retriever_caches
+from app.persistence import load_history as _load_history
+from app.persistence import save_history as _save_history
+from app.persistence import sync_remote_pdfs_to_local
+from app.persistence import upload_kb_artifacts
+from app.pdf_ingestion import save_uploaded_pdf
+from app.rag_pipeline import run_rag
+from app.rebuild_pipeline import rebuild_knowledge_base
+from app.retriever import clear_retriever_caches
 
 router = APIRouter()
 

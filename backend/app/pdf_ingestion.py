@@ -6,8 +6,8 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 
-from backend.app.persistence import upload_local_pdf_to_remote
-from backend.app.supabase_storage import supabase_enabled
+from app.persistence import upload_local_pdf_to_remote
+from app.supabase_storage import supabase_enabled
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw_data"

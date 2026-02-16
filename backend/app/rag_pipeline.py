@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from backend.app.llm import generate_answer
-from backend.app.prompt import build_prompt
-from backend.app.retriever import retrieve_relevant_chunks
-from backend.app.persistence import ensure_kb_artifacts
+from app.llm import generate_answer
+from app.prompt import build_prompt
+from app.retriever import retrieve_relevant_chunks
+from app.persistence import ensure_kb_artifacts
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHUNKS_PATH = PROJECT_ROOT / "data" / "processed_data" / "chunks.json"

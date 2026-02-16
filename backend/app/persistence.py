@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from backend.app.supabase_storage import (
+from app.supabase_storage import (
     download_bytes,
     history_key,
     kb_folder,
