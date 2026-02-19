@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 from functools import lru_cache
 
-from sentence_transformers import SentenceTransformer
-
 from app.faiss_store import load_faiss_index
 from app.persistence import ensure_kb_artifacts
 
@@ -18,8 +16,9 @@ EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
 
 
 @lru_cache(maxsize=1)
-def _get_embedding_model() -> SentenceTransformer:
-    # Loading SentenceTransformer is expensive; cache it for the process lifetime.
+def _get_embedding_model():
+    # 🔥 Lazy import (important for Render startup)
+    from sentence_transformers import SentenceTransformer
     return SentenceTransformer(EMBED_MODEL_NAME, device="cpu")
 
 
@@ -35,7 +34,6 @@ def _get_metadata() -> list[dict]:
 
 @lru_cache(maxsize=1)
 def _get_index():
-    # Loading the FAISS index from disk repeatedly adds latency.
     return load_faiss_index()
 
 
@@ -43,8 +41,8 @@ def retrieve_relevant_chunks(query: str):
     metadata = _get_metadata()
     index = _get_index()
     model = _get_embedding_model()
-    query_embedding = model.encode([query], convert_to_numpy=True)
 
+    query_embedding = model.encode([query], convert_to_numpy=True)
     _distances, indices = index.search(query_embedding, TOP_K)
 
     results = []
@@ -56,7 +54,6 @@ def retrieve_relevant_chunks(query: str):
 
 
 def clear_retriever_caches() -> None:
-    """Clear in-process caches so the retriever sees newly rebuilt artifacts."""
     try:
         _get_metadata.cache_clear()
     except Exception:
@@ -65,4 +62,3 @@ def clear_retriever_caches() -> None:
         _get_index.cache_clear()
     except Exception:
         pass
-    # We intentionally keep the embedding model cached; it is independent of the KB.
