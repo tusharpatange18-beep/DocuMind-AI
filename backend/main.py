@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uvicorn
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +11,7 @@ from app.api import router as api_router
 
 app = FastAPI(title="DocuMind AI", version="1.0.0")
 
+
 def _cors_origins_from_env() -> list[str]:
     raw = (os.getenv("CORS_ALLOW_ORIGINS") or "").strip()
     if not raw:
@@ -18,8 +20,6 @@ def _cors_origins_from_env() -> list[str]:
     return origins or ["*"]
 
 
-# CORS: frontend is usually a separate static site.
-# For production, set CORS_ALLOW_ORIGINS to a comma-separated list of allowed origins.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins_from_env(),
@@ -29,3 +29,10 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+
+# 🔥 IMPORTANT FOR RENDER DEPLOYMENT
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
