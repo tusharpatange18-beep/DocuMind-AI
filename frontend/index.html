@@ -2,77 +2,122 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="api-base" content="" />
   <title>DocuMind AI</title>
+  <!-- Markdown & Syntax Highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="app">
+  <div class="app-layout">
+    
+    <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
-      <div class="sidebar-inner">
-        <div class="sidebar-header">
-          <div class="sidebar-title">📄 Document Upload</div>
+      <div class="sidebar-top">
+        <button class="new-chat-btn" id="newChatBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          New chat
+        </button>
+        <button class="icon-btn close-sidebar-mobile" id="closeSidebarMobile" aria-label="Close sidebar">✕</button>
+      </div>
+
+      <div class="sidebar-search">
+        <input type="text" id="sidebarSearch" placeholder="Search..." class="search-input" />
+      </div>
+
+      <div class="sidebar-scrollable" id="sidebarHistory">
+        <!-- History groups will be injected here dynamically -->
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="sidebar-profile">
+          <div class="avatar-sm">U</div>
+          <span class="profile-name">User</span>
+          <button class="settings-btn" id="settingsMenuBtn">⚙️</button>
         </div>
-
-        <label class="field-label" for="pdfInput">Upload PDF Document</label>
-        <input class="file-input" id="pdfInput" type="file" accept="application/pdf" />
-        <button class="btn" id="uploadBtn">Upload</button>
-        <div class="status" id="uploadStatus"></div>
-
-        <div class="divider"></div>
-
-        <div class="sidebar-header">
-          <div class="sidebar-title">⚙️ Knowledge Base</div>
-        </div>
-        <button class="btn" id="rebuildBtn">🔄 Rebuild Knowledge Base</button>
-        <div class="status" id="rebuildStatus"></div>
-
-        <div class="divider"></div>
-
-        <div class="sidebar-header">
-          <div class="sidebar-title">🗑️ Clear Data</div>
-        </div>
-        <button class="btn" id="clearHistoryBtn">Clear Chat History</button>
-        <div class="status" id="clearStatus"></div>
       </div>
     </aside>
 
-    <div class="overlay" id="overlay"></div>
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
-    <main class="main">
-      <header class="app-header">
-        <div class="app-logo">
-          <div class="app-icon">🤖</div>
-          <span class="app-name">DocuMind AI</span>
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Top Header -->
+      <header class="main-header">
+        <div class="header-left">
+          <button class="icon-btn toggle-sidebar-btn" id="toggleSidebarBtn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+          </button>
+          <span class="header-title">DocuMind AI</span>
+          <span class="header-badge">v2.0</span>
         </div>
-        <button class="menu-btn" id="menuBtn" aria-label="Menu">M</button>
+        <div class="header-right">
+          <!-- Document Controls in Header -->
+          <button class="header-btn" id="headerUploadBtn">Upload PDF</button>
+          <button class="header-btn" id="headerRebuildBtn">Rebuild Index</button>
+          <!-- Hidden inputs and statuses -->
+          <input type="file" id="pdfInput" accept="application/pdf" style="display: none;" />
+        </div>
       </header>
+      
+      <!-- Small status bar below header -->
+      <div class="top-status-bar" id="topStatusBar" style="display: none;"></div>
 
-      <section class="greeting" id="greeting">
-        <div class="ai-avatar"></div>
-        <div class="greeting-text">Good evening!<br />How can I help you today?</div>
-        <div class="greeting-subtext">Upload a document and ask questions about it</div>
-        <div class="prompt-buttons">
-          <button class="prompt-btn" id="promptUpload">📄 Upload Document</button>
-          <button class="prompt-btn" id="promptExample">💡 Example Questions</button>
+      <!-- Chat Area -->
+      <section class="chat-viewport">
+        <!-- Empty / Welcome State -->
+        <div class="welcome-state" id="welcomeState">
+          <div class="welcome-logo">🤖</div>
+          <h1>How can I help you today?</h1>
+        </div>
+
+        <!-- Messages Container -->
+        <div class="messages-container" id="chatArea">
+          <!-- Messages will be injected here -->
         </div>
       </section>
 
-      <section class="chat-area" id="chatArea"></section>
-
-      <footer class="input-area">
-        <div class="input-container">
-          <input class="input-field" id="questionInput" type="text" placeholder="Ask about your documents..." />
-          <div class="input-icons">
-            <button class="icon-btn send" id="sendBtn" aria-label="Send">🚀</button>
+      <!-- Input Area -->
+      <div class="input-wrapper">
+        <div class="input-box">
+          <div class="input-context" id="inputContext" style="display: none;">
+            <span class="context-icon">📄</span> <span id="inputContextText">Document loaded</span>
+          </div>
+          <textarea id="questionInput" class="chat-input" placeholder="Message DocuMind AI..." rows="1" autofocus></textarea>
+          <button class="send-btn" id="sendBtn" disabled>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="text-white"><path d="M7 11L12 6L17 11M12 18V7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </button>
+        </div>
+        <div class="disclaimer-text">
+          DocuMind AI can make mistakes. Check important info.
+        </div>
+      </div>
+      
+      <!-- Settings Modal (Hidden by default) -->
+      <div class="modal-backdrop" id="settingsModal" style="display: none;">
+        <div class="modal">
+          <div class="modal-header">
+            <h2>Settings</h2>
+            <button class="icon-btn" id="closeSettingsBtn">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="setting-row">
+              <div>
+                <strong>Clear Chat History</strong>
+                <p>Delete all messages in the current session.</p>
+              </div>
+              <button class="danger-btn" id="clearHistoryBtn">Clear</button>
+            </div>
           </div>
         </div>
-        <div class="disclaimer">Please verify important information</div>
-      </footer>
+      </div>
+
     </main>
   </div>
-
   <script src="script.js"></script>
 </body>
 </html>
