@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -33,8 +34,27 @@ def save_uploaded_pdf(file: UploadFile) -> str:
         # Use a larger buffer to reduce Python overhead on big PDFs.
         shutil.copyfileobj(file.file, f, length=8 * 1024 * 1024)
 
+    # If exactly the same file was uploaded before, keep the old copy
+    # and delete the new one, so the same PDF is never stored twice.
+    new_hash = _file_hash(dest)
+    for existing in RAW_DATA_DIR.glob("*.pdf"):
+        if existing == dest:
+            continue
+        if existing.stat().st_size == dest.stat().st_size and _file_hash(existing) == new_hash:
+            dest.unlink()
+            return str(existing)
+
     # Persist to Supabase Storage when enabled.
     if supabase_enabled():
         upload_local_pdf_to_remote(local_path=dest, object_name=dest.name)
 
     return str(dest)
+
+
+def _file_hash(path: Path) -> str:
+    # A fingerprint of the file's contents; equal fingerprints = identical files.
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
