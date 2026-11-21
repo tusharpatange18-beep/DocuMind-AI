@@ -24,8 +24,16 @@ router = APIRouter()
 ASK_TIMEOUT_SECONDS = float(os.getenv("ASK_TIMEOUT_SECONDS", "120"))
 
 
+class HistoryTurn(BaseModel):
+    # One earlier question and answer from the same chat.
+    question: str = ""
+    answer: str = ""
+
+
 class AskRequest(BaseModel):
     question: str
+    # Recent turns of this chat (chat memory); empty for a new chat.
+    history: list[HistoryTurn] = []
 
 
 class SourceItem(BaseModel):
@@ -50,9 +58,22 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     try:
         saved_path = await run_in_threadpool(save_uploaded_pdf, file)
-        return {"success": True, "filename": Path(saved_path).name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save PDF: {str(e)}")
+
+    # Index the PDF right away, so it can be searched as soon as
+    # the upload finishes (no need to press "Rebuild Index").
+    try:
+        await run_in_threadpool(rebuild_knowledge_base)
+        clear_retriever_caches()
+        await run_in_threadpool(upload_kb_artifacts)
+    except ValueError as e:
+        # e.g. a scanned PDF with no readable text
+        raise HTTPException(status_code=400, detail=f"PDF saved but could not be read: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF saved but indexing failed: {str(e)}")
+
+    return {"success": True, "filename": Path(saved_path).name}
 
 
 @router.post("/rebuild-knowledge-base")
@@ -81,7 +102,9 @@ async def ask(req: AskRequest):
     try:
         try:
             with anyio.fail_after(ASK_TIMEOUT_SECONDS):
-                answer, sources = await run_in_threadpool(run_rag, question)
+                # Keep only the last 3 turns, as plain dicts.
+                recent_turns = [t.model_dump() for t in req.history[-3:]]
+                answer, sources = await run_in_threadpool(run_rag, question, recent_turns)
         except TimeoutError:
             raise HTTPException(
                 status_code=504,
@@ -93,8 +116,12 @@ async def ask(req: AskRequest):
         _save_history(history)
 
         return {"answer": answer, "sources": sources}
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError:
+        # No PDFs have been uploaded and indexed yet.
+        raise HTTPException(
+            status_code=400,
+            detail="No documents yet. Click \"Upload PDF\" to add a document, then ask your question.",
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ask failed: {str(e)}")
 

@@ -210,7 +210,10 @@ function setStatus(msg, isError = false) {
 
 // API Wrapper
 async function apiJson(path, options = {}) {
-  const timeoutMs = (path === "/ask") ? 125000 : 30000;
+  // Asking and rebuilding the index are slow; everything else is quick.
+  let timeoutMs = 30000;
+  if (path === "/ask") timeoutMs = 125000;
+  if (path === "/rebuild-knowledge-base") timeoutMs = 300000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -323,7 +326,8 @@ function addUserMessage(text) {
 
 function renderSourcesHtml(sources) {
   if (!Array.isArray(sources) || sources.length === 0) return "";
-  const top = sources.slice(0, 3);
+  // Show every source the answer was built from (the backend sends 5).
+  const top = sources;
   const pills = top.map(s => {
     const label = `${s.source || "doc"} · Page ${s.page ?? "?"}`;
     return `<div class="source-ref"><span class="source-icon">📄</span> <span>${escapeHtml(label)}</span></div>`;
@@ -537,7 +541,12 @@ pdfInput.addEventListener("change", async () => {
       xhr.upload.onprogress = (evt) => {
         if (evt.lengthComputable) {
           const pct = Math.floor((evt.loaded / evt.total) * 100);
-          setStatus(`Uploading ${file.name}... ${pct}%`);
+          if (pct < 100) {
+            setStatus(`Uploading ${file.name}... ${pct}%`);
+          } else {
+            // File is sent; the backend is now reading and indexing it.
+            setStatus(`Indexing ${file.name}... please wait`);
+          }
         }
       };
       xhr.onerror = () => reject(new Error("Network error"));
@@ -550,8 +559,9 @@ pdfInput.addEventListener("change", async () => {
       xhr.send(form);
     });
 
-    setStatus(`Uploaded: ${data.filename || file.name}`);
-    
+    // The backend indexes the PDF before replying, so it is ready now.
+    setStatus(`Ready: ${data.filename || file.name} is indexed. Ask your question.`);
+
     // Show document context indicator
     inputContext.style.display = "flex";
     inputContextText.textContent = data.filename || file.name;
@@ -638,10 +648,21 @@ async function handleSend(retryQuestion = null) {
   questionInput.disabled = true;
   sendBtn.disabled = true;
 
+  // Chat memory: send the last 3 questions and answers of this chat,
+  // so follow-ups like "what about its textbooks?" can be understood.
+  const recentTurns = chatManager.getActiveMessages().slice(-3);
+  const history = [];
+  for (const turn of recentTurns) {
+    history.push({
+      question: turn.question || "",
+      answer: (turn.answer || "").slice(0, 600), // keep it short
+    });
+  }
+
   try {
     const data = await apiJson("/ask", {
       method: "POST",
-      body: JSON.stringify({ question: q }),
+      body: JSON.stringify({ question: q, history: history }),
     });
     
     // Add to global array and sync count
